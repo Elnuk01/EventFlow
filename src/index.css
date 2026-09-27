@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: 'Cabinet Grotesk', 'Plus Jakarta Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color-scheme: dark;
+  }
+
+  /* Custom subtle scrollbars for dense desktop views */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+}
+
+/* Tabular figures helper */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle LED glow effect */
+.led-glow {
+  text-shadow: 0 0 16px rgba(59, 130, 246, 0.45);
+}
+
+.led-glow-red {
+  text-shadow: 0 0 16px rgba(239, 68, 68, 0.6);
+}
+
+.led-glow-amber {
+  text-shadow: 0 0 16px rgba(245, 158, 11, 0.5);
+}
+
+.led-glow-green {
+  text-shadow: 0 0 16px rgba(34, 197, 94, 0.5);
+}
+
+/* Popping animation for Time Up alert on Presenter screen */
+@keyframes timeUpPop {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 0 25px rgba(239, 68, 68, 0.8));
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.92;
+    filter: drop-shadow(0 0 45px rgba(239, 68, 68, 1));
+  }
+}
+
+.animate-timeup-pop {
+  animation: timeUpPop 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}

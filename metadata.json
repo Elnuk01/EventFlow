@@ -1,0 +1,6 @@
+{
+  "name": "EventFlow - Event Timing & Stage Control",
+  "description": "Professional PC desktop event timing, schedule management, presentation, and stage-control operating system for live productions, conferences, and ceremonies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
