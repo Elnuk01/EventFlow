@@ -5,6 +5,7 @@ import {
   Play,
   Pause,
   RotateCcw,
+  MonitorPlay,
 } from 'lucide-react';
 import { EventSchedule, PresenterTheme } from '../types';
 import { TimerSnapshot, timerEngine } from '../services/timerEngine';
@@ -23,6 +24,7 @@ interface PresenterPageProps {
 export const PresenterPage: React.FC<PresenterPageProps> = ({
   event,
   timerSnapshot,
+  onOpenExternalWindow,
   onNavigateToLive,
 }) => {
   const [selectedTheme, setSelectedTheme] = useState<PresenterTheme>('minimal-dark');
@@ -62,11 +64,20 @@ export const PresenterPage: React.FC<PresenterPageProps> = ({
 
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={onOpenExternalWindow}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all shadow-sm active:scale-95 cursor-pointer"
+            title="Open Stage Display immediately on extended monitor"
+          >
+            <MonitorPlay size={14} />
+            <span>Show on Extended Screen</span>
+          </button>
+          <button
             onClick={() => setIsFullscreenPreview(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-all shadow-sm active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-medium transition-all shadow-sm cursor-pointer"
+            title="Preview Fullscreen in this window"
           >
             <Maximize2 size={14} />
-            <span>Launch Fullscreen (F)</span>
+            <span>Preview Fullscreen (F)</span>
           </button>
         </div>
       </div>

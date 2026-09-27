@@ -85,14 +85,15 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline"> buffer</span>
         </button>
 
-        {/* Presenter Fullscreen Display Button */}
+        {/* Stage Display on Extended Screen Button */}
         <button
           onClick={onOpenPresenter}
           className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-800/80 hover:bg-neutral-700/80 border border-neutral-700/40 rounded-lg transition-colors cursor-pointer"
-          title="Open Presenter View"
+          title="Open Stage Display on Extended Screen"
         >
-          <Monitor size={13} className="text-neutral-400" />
-          <span className="hidden sm:inline">Presenter</span>
+          <Monitor size={13} className="text-emerald-400" />
+          <span className="hidden sm:inline">Stage Display</span>
+          <span className="sm:hidden">Stage</span>
         </button>
       </div>
     </header>

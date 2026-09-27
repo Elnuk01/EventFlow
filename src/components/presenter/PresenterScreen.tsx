@@ -27,6 +27,7 @@ export const PresenterScreen: React.FC<PresenterScreenProps> = ({
   overtimeSeconds,
   theme = 'minimal-dark',
   onClose,
+  isStandalone = false,
 }) => {
   // Listen for Escape key and F key to exit presenter screen reliably
   useEffect(() => {
@@ -96,23 +97,32 @@ export const PresenterScreen: React.FC<PresenterScreenProps> = ({
     >
       {/* Top Bar with clear Exit & Fullscreen Controls */}
       <header className="w-full flex items-center justify-between z-20">
-        <div className="flex items-center gap-2 opacity-40 hover:opacity-80 transition-opacity">
+        <div className="flex items-center gap-2.5 opacity-60 hover:opacity-100 transition-opacity">
           <img
             src="/logo.png"
             alt="EventFlow"
             className="w-5 h-5 object-contain rounded"
           />
-          <span className="text-xs font-medium tracking-tight">EventFlow</span>
+          <span className="text-xs font-semibold tracking-tight">EventFlow</span>
+          {isStandalone && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              STAGE DISPLAY
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={toggleFullscreen}
-            className="p-2.5 rounded-xl bg-neutral-900/70 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 transition-colors"
-            title="Toggle Browser Fullscreen"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-medium transition-colors cursor-pointer"
+            title="Toggle Browser Fullscreen (F)"
             aria-label="Toggle Fullscreen"
           >
-            <Maximize size={18} />
+            <Maximize size={15} />
+            <span className="hidden sm:inline">Fullscreen</span>
+            <kbd className="font-mono text-[10px] px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400">
+              F
+            </kbd>
           </button>
 
           {onClose && (
@@ -123,12 +133,12 @@ export const PresenterScreen: React.FC<PresenterScreenProps> = ({
                 }
                 onClose();
               }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-900/90 hover:bg-rose-950 text-neutral-200 hover:text-rose-200 border border-neutral-700/80 hover:border-rose-700 transition-all duration-150 shadow-lg active:scale-95 cursor-pointer font-medium text-xs"
-              title="Exit Presenter Screen (Esc)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-rose-950 text-neutral-300 hover:text-rose-200 border border-neutral-800 hover:border-rose-800 transition-colors cursor-pointer text-xs font-medium"
+              title={isStandalone ? 'Close Window (Esc)' : 'Exit Presenter Screen (Esc)'}
             >
-              <X size={18} className="text-neutral-400 hover:text-rose-300" />
-              <span>Exit Presenter</span>
-              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 ml-1">
+              <X size={15} className="text-neutral-400 hover:text-rose-300" />
+              <span>{isStandalone ? 'Close' : 'Exit'}</span>
+              <kbd className="font-mono text-[10px] px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400">
                 ESC
               </kbd>
             </button>

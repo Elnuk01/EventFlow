@@ -12,6 +12,8 @@ import { HistoryPage } from './pages/HistoryPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PresenterScreen } from './components/presenter/PresenterScreen';
+import { StageDisplayStandalone } from './components/presenter/StageDisplayStandalone';
+import { stageDisplayService } from './services/stageDisplayService';
 import { useEventFlow } from './stores/eventStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { timerEngine } from './services/timerEngine';
@@ -19,7 +21,7 @@ import { db } from './database/db';
 import { EventSchedule, EventTemplate, EventHistoryRecord } from './types';
 import { DEMO_EVENT } from './database/defaultData';
 
-export default function App() {
+function EventFlowApp() {
   const {
     activeEvent,
     settings,
@@ -220,9 +222,60 @@ export default function App() {
     setPanicConfirmModalOpen(false);
   };
 
-  // Pop-out external window for dual monitors / secondary displays
-  const handleOpenExternalPresenter = () => {
-    setIsPresenterFullscreen(true);
+  // Continuously broadcast live stage state to the extended screen window
+  useEffect(() => {
+    const curSeg = activeEvent?.segments[timerSnapshot.currentSegmentIndex] || null;
+    const nextSeg = activeEvent?.segments[timerSnapshot.currentSegmentIndex + 1] || null;
+
+    stageDisplayService.broadcastState({
+      segment: curSeg,
+      nextSegment: nextSeg,
+      eventName: activeEvent?.name || 'EventFlow Stage Display',
+      state: timerSnapshot.state,
+      remainingSeconds: timerSnapshot.remainingSeconds,
+      elapsedSeconds: timerSnapshot.elapsedSeconds,
+      overtimeSeconds: timerSnapshot.overtimeSeconds,
+      plannedDurationSeconds: timerSnapshot.plannedDurationSeconds,
+      theme: settings.presenter.theme,
+      timestamp: Date.now(),
+    });
+  }, [
+    activeEvent,
+    timerSnapshot.currentSegmentIndex,
+    timerSnapshot.state,
+    timerSnapshot.remainingSeconds,
+    timerSnapshot.elapsedSeconds,
+    timerSnapshot.overtimeSeconds,
+    timerSnapshot.plannedDurationSeconds,
+    settings.presenter.theme,
+  ]);
+
+  const [stageToast, setStageToast] = useState<{
+    show: boolean;
+    message: string;
+    isError?: boolean;
+  }>({ show: false, message: '' });
+
+  // Pop-out external window for extended monitors / secondary displays
+  const handleOpenExternalPresenter = async () => {
+    const result = await stageDisplayService.openOnExtendedScreen();
+    if (result.success) {
+      setStageToast({
+        show: true,
+        message: result.isExtended
+          ? `Stage Display active on Extended Screen (${result.screenLabel || 'Monitor 2'})`
+          : 'Stage Display opened in external window. Drag to your projector or secondary screen.',
+      });
+      setTimeout(() => setStageToast((prev) => ({ ...prev, show: false })), 6000);
+    } else if (result.blocked) {
+      setStageToast({
+        show: true,
+        isError: true,
+        message: 'Browser blocked pop-up. Allow pop-ups for this site to open Stage Display on your extended monitor.',
+      });
+    } else {
+      setIsPresenterFullscreen(true);
+    }
   };
 
   // Broadcast Keyboard Shortcuts
@@ -234,7 +287,7 @@ export default function App() {
       onResetSegment: () => timerEngine.reset(),
       onAdd1Min: () => timerEngine.adjustTime(60),
       onSub1Min: () => timerEngine.adjustTime(-60),
-      onTogglePresenter: () => setIsPresenterFullscreen((prev) => !prev),
+      onTogglePresenter: handleOpenExternalPresenter,
       onToggleFocusMode: () => setIsFocusMode((prev) => !prev),
       onPanicAction: handleTriggerPanic,
     },
@@ -301,7 +354,7 @@ export default function App() {
           settings={settings}
           isFocusMode={isFocusMode}
           onToggleFocusMode={() => setIsFocusMode(!isFocusMode)}
-          onOpenPresenter={() => setIsPresenterFullscreen(true)}
+          onOpenPresenter={handleOpenExternalPresenter}
           onTriggerPanic={handleTriggerPanic}
           onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
         />
@@ -499,7 +552,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Fullscreen Presenter / Projector Overlay Screen */}
+      {/* Fullscreen Presenter / Projector Overlay Screen (Fallback / In-App Preview) */}
       {isPresenterFullscreen && activeEvent && (
         <PresenterScreen
           segment={currentSegment}
@@ -510,6 +563,65 @@ export default function App() {
           onClose={() => setIsPresenterFullscreen(false)}
         />
       )}
+
+      {/* Stage Display Connection Notification Toast */}
+      {stageToast.show && (
+        <div className="fixed bottom-16 md:bottom-6 right-4 sm:right-6 z-50 animate-in fade-in slide-in-from-bottom-3 max-w-sm w-[calc(100vw-2rem)] sm:w-auto">
+          <div
+            className={`p-3.5 rounded-xl border shadow-2xl backdrop-blur-md flex items-start gap-3 ${
+              stageToast.isError
+                ? 'bg-rose-950/95 border-rose-800 text-rose-200'
+                : 'bg-neutral-900/95 border-emerald-500/40 text-neutral-200'
+            }`}
+          >
+            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
+              <MonitorPlay size={18} />
+            </div>
+            <div className="flex-1 text-xs">
+              <div className="font-semibold text-white mb-0.5">
+                {stageToast.isError ? 'Pop-up Notice' : 'Stage Display Connected'}
+              </div>
+              <p className="text-neutral-300 leading-relaxed">{stageToast.message}</p>
+              {stageToast.isError && (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setStageToast((prev) => ({ ...prev, show: false }));
+                      setIsPresenterFullscreen(true);
+                    }}
+                    className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-white font-medium cursor-pointer transition-colors"
+                  >
+                    View in this Window
+                  </button>
+                  <button
+                    onClick={() => {
+                      setStageToast((prev) => ({ ...prev, show: false }));
+                      handleOpenExternalPresenter();
+                    }}
+                    className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium cursor-pointer transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setStageToast((prev) => ({ ...prev, show: false }))}
+              className="text-neutral-400 hover:text-white cursor-pointer -mr-1 -mt-1 p-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+export default function App() {
+  if (stageDisplayService.isStageWindow()) {
+    return <StageDisplayStandalone />;
+  }
+
+  return <EventFlowApp />;
 }
