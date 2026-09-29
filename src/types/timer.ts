@@ -28,7 +28,35 @@ export type PresenterMode =
   | 'event'
   | 'timeline'
   | 'clock'
+  | 'lower-third'
   | 'cinematic';
+
+export interface PresenterDisplayConfig {
+  mode: PresenterMode;
+  theme: PresenterTheme;
+  showNextSegment: boolean;
+  showSpeakerName: boolean;
+  showEventName: boolean;
+  showClock: boolean;
+  showProgressBar: boolean;
+  fontSizeScale: 'normal' | 'large' | 'jumbo';
+  overtimeDisplay: 'timeup-pop' | 'numeric-counter';
+  customMessage?: string;
+  showCustomMessage?: boolean;
+}
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  organization: string;
+  role: 'director' | 'producer' | 'operator' | 'speaker';
+  avatar?: string;
+  isGuest?: boolean;
+  authProvider?: 'google' | 'email';
+  createdAt?: string;
+  lastLoginAt?: string;
+}
 
 export interface AppSettings {
   general: {

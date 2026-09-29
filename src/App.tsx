@@ -11,6 +11,7 @@ import { TemplatesPage } from './pages/TemplatesPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminPage } from './pages/AdminPage';
 import { PresenterScreen } from './components/presenter/PresenterScreen';
 import { StageDisplayStandalone } from './components/presenter/StageDisplayStandalone';
 import { stageDisplayService } from './services/stageDisplayService';
@@ -18,10 +19,24 @@ import { useEventFlow } from './stores/eventStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { timerEngine } from './services/timerEngine';
 import { db } from './database/db';
-import { EventSchedule, EventTemplate, EventHistoryRecord } from './types';
+import { EventSchedule, EventTemplate, EventHistoryRecord, AuthUser } from './types';
 import { DEMO_EVENT } from './database/defaultData';
+import { LandingPage } from './pages/LandingPage';
+import { authService } from './services/authService';
 
-function EventFlowApp() {
+interface EventFlowAppProps {
+  currentUser: AuthUser | null;
+  onNavigateToLanding: () => void;
+  onLogout: () => void;
+  onOpenAuth: () => void;
+}
+
+function EventFlowApp({
+  currentUser,
+  onNavigateToLanding,
+  onLogout,
+  onOpenAuth,
+}: EventFlowAppProps) {
   const {
     activeEvent,
     settings,
@@ -314,6 +329,7 @@ function EventFlowApp() {
           setIsCollapsed={setIsSidebarCollapsed}
           isLiveRunning={isLiveRunning}
           onOpenPresenterWindow={handleOpenExternalPresenter}
+          onNavigateToLanding={onNavigateToLanding}
         />
       )}
 
@@ -339,6 +355,10 @@ function EventFlowApp() {
                 handleOpenExternalPresenter();
                 setIsMobileMenuOpen(false);
               }}
+              onNavigateToLanding={() => {
+                setIsMobileMenuOpen(false);
+                onNavigateToLanding();
+              }}
               onCloseMobile={() => setIsMobileMenuOpen(false)}
               isMobile={true}
             />
@@ -353,10 +373,14 @@ function EventFlowApp() {
           activeEvent={activeEvent}
           settings={settings}
           isFocusMode={isFocusMode}
+          currentUser={currentUser}
           onToggleFocusMode={() => setIsFocusMode(!isFocusMode)}
           onOpenPresenter={handleOpenExternalPresenter}
           onTriggerPanic={handleTriggerPanic}
           onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
+          onNavigateToLanding={onNavigateToLanding}
+          onLogout={onLogout}
+          onOpenAuth={onOpenAuth}
         />
 
         {/* Viewport Content Tabs */}
@@ -623,5 +647,117 @@ export default function App() {
     return <StageDisplayStandalone />;
   }
 
-  return <EventFlowApp />;
+  // Helper function to check if current URL points to the secret admin endpoint
+  const checkIsAdminUrl = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const params = new URLSearchParams(window.location.search);
+    const host = window.location.hostname.toLowerCase();
+
+    return (
+      path.startsWith('/admin') ||
+      path.includes('/admin') ||
+      hash === '#admin' ||
+      hash.startsWith('#admin') ||
+      hash.startsWith('#/admin') ||
+      params.get('view') === 'admin' ||
+      params.get('admin') !== null ||
+      params.get('page') === 'admin' ||
+      host.startsWith('admin.')
+    );
+  };
+
+  // Determine initial view from URL: 'landing', 'app' (workspace), or 'admin'
+  const [currentView, setCurrentView] = useState<'app' | 'landing' | 'admin'>(() => {
+    if (checkIsAdminUrl()) return 'admin';
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash;
+      const params = new URLSearchParams(window.location.search);
+      if (hash === '#app' || params.get('view') === 'app') return 'app';
+    }
+    return 'landing';
+  });
+
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => authService.getCurrentUser());
+
+  useEffect(() => {
+    return authService.subscribe((user) => {
+      setCurrentUser(user);
+    });
+  }, []);
+
+  // React to URL hash or popstate navigation changes
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (checkIsAdminUrl()) {
+        setCurrentView('admin');
+      } else if (window.location.hash === '#app') {
+        setCurrentView('app');
+      }
+    };
+
+    window.addEventListener('hashchange', handleUrlChange);
+    window.addEventListener('popstate', handleUrlChange);
+    return () => {
+      window.removeEventListener('hashchange', handleUrlChange);
+      window.removeEventListener('popstate', handleUrlChange);
+    };
+  }, []);
+
+  // Secret Admin Portal View (Accessible ONLY via direct URL)
+  if (currentView === 'admin') {
+    return (
+      <AdminPage
+        currentUser={currentUser}
+        onNavigateToApp={() => {
+          if (typeof window !== 'undefined') {
+            if (window.location.hash.toLowerCase().includes('admin')) {
+              window.location.hash = '';
+            }
+            if (window.location.search.toLowerCase().includes('admin')) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('view');
+              url.searchParams.delete('admin');
+              url.searchParams.delete('page');
+              window.history.replaceState({}, '', url.pathname + url.hash);
+            }
+          }
+          setCurrentView('landing');
+        }}
+      />
+    );
+  }
+
+  if (currentView === 'landing') {
+    return (
+      <LandingPage
+        currentUser={currentUser}
+        onEnterApp={() => setCurrentView('app')}
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setCurrentView('app');
+        }}
+        onLogout={() => {
+          authService.logout();
+          setCurrentUser(null);
+        }}
+      />
+    );
+  }
+
+  return (
+    <EventFlowApp
+      currentUser={currentUser}
+      onNavigateToLanding={() => setCurrentView('landing')}
+      onLogout={() => {
+        authService.logout();
+        setCurrentUser(null);
+        setCurrentView('landing');
+      }}
+      onOpenAuth={() => {
+        setCurrentView('landing');
+      }}
+    />
+  );
 }

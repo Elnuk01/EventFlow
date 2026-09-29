@@ -1,4 +1,4 @@
-import { EventSegment, PresenterTheme, TimerState } from '../types';
+import { EventSegment, PresenterTheme, PresenterMode, PresenterDisplayConfig, TimerState } from '../types';
 
 export interface StageDisplayState {
   segment: EventSegment | null;
@@ -10,6 +10,16 @@ export interface StageDisplayState {
   overtimeSeconds: number;
   plannedDurationSeconds: number;
   theme: PresenterTheme;
+  mode?: PresenterMode;
+  displayConfig?: Partial<PresenterDisplayConfig>;
+  allSegments?: Array<{
+    id?: string;
+    name: string;
+    plannedDurationSeconds: number;
+    speaker?: string;
+    isCompleted?: boolean;
+    isCurrent?: boolean;
+  }>;
   timestamp: number;
 }
 

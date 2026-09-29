@@ -11,6 +11,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Home,
 } from 'lucide-react';
 import { audioService } from '../../services/audioService';
 
@@ -32,6 +33,7 @@ interface SidebarProps {
   setIsCollapsed: (collapsed: boolean) => void;
   isLiveRunning: boolean;
   onOpenPresenterWindow: () => void;
+  onNavigateToLanding?: () => void;
   onCloseMobile?: () => void;
   isMobile?: boolean;
 }
@@ -43,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setIsCollapsed,
   isLiveRunning,
   onOpenPresenterWindow,
+  onNavigateToLanding,
   onCloseMobile,
   isMobile = false,
 }) => {
@@ -173,8 +176,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               title="Open Presenter Window"
             >
               <MonitorPlay size={13} />
-              <span>Stage Display</span>
+              <span>Stage</span>
             </button>
+
+            {onNavigateToLanding && (
+              <button
+                onClick={() => {
+                  onNavigateToLanding();
+                  if (onCloseMobile) onCloseMobile();
+                }}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                title="View Brand Landing Page"
+              >
+                <Home size={13} />
+                <span>Home</span>
+              </button>
+            )}
 
             <button
               onClick={toggleSound}

@@ -100,6 +100,9 @@ export const StageDisplayStandalone: React.FC = () => {
         overtimeSeconds={state.overtimeSeconds}
         plannedDurationSeconds={state.plannedDurationSeconds}
         theme={state.theme}
+        mode={state.mode}
+        displayConfig={state.displayConfig}
+        allSegments={state.allSegments}
         isStandalone={true}
         onClose={() => {
           if (window.opener) {
