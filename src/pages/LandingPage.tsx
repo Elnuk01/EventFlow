@@ -6,7 +6,6 @@ import {
   Clock,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
   CheckCircle2,
   Tv,
   Layers,
@@ -29,21 +28,11 @@ import {
   Palette,
   Type,
   Code2,
-  Copy,
-  Check,
-  Database,
   ExternalLink,
 } from 'lucide-react';
 import { formatDuration } from '../utils/timeUtils';
 import { authService } from '../services/authService';
-import {
-  isSupabaseConfigured,
-  setSupabaseCredentials,
-  getSupabaseUrl,
-  getSupabaseAnonKey,
-  getOAuthRedirectUrl,
-  PRODUCTION_OAUTH_REDIRECT_URL,
-} from '../services/supabaseClient';
+import { isSupabaseConfigured } from '../services/supabaseClient';
 import { AuthUser } from '../types';
 
 interface LandingPageProps {
@@ -73,14 +62,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [showUserDropdown, setShowUserDropdown] = useState<boolean>(false);
 
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState<boolean>(false);
-
-  // Supabase Configuration Modal State (for easy 1-click credential setup if not in env)
-  const [showSupabaseModal, setShowSupabaseModal] = useState<boolean>(false);
-  const [supabaseUrlInput, setSupabaseUrlInput] = useState<string>(() => getSupabaseUrl());
-  const [supabaseKeyInput, setSupabaseKeyInput] = useState<string>(() => getSupabaseAnonKey());
-  const [supabaseConfigError, setSupabaseConfigError] = useState<string>('');
-  const [copiedRedirectProd, setCopiedRedirectProd] = useState<boolean>(false);
-  const [copiedRedirectDev, setCopiedRedirectDev] = useState<boolean>(false);
 
   // Demo 2: Animated Overrun Recovery Simulation
   const [isCompensated, setIsCompensated] = useState<boolean>(false);
@@ -131,14 +112,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   // Google Sign-In & Create Account Handler (Real Supabase Google OAuth)
   const handleGoogleSignIn = async () => {
     setAuthError('');
-
-    // If Supabase credentials are not configured yet, open configuration prompt immediately
-    if (!isSupabaseConfigured()) {
-      setSupabaseConfigError('');
-      setShowSupabaseModal(true);
-      return;
-    }
-
     setIsGoogleSigningIn(true);
     setAuthLoading(true);
 
@@ -149,51 +122,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         setIsGoogleSigningIn(false);
         setAuthLoading(false);
       }
-      // On success, the browser redirects to Google OAuth consent screen via Supabase
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect to Google authentication.';
-      setAuthError(msg);
-      setIsGoogleSigningIn(false);
-      setAuthLoading(false);
-    }
-  };
-
-  // Save Supabase credentials entered directly by user and immediately initiate Google login
-  const handleSaveSupabaseConfig = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setSupabaseConfigError('');
-
-    const cleanUrl = supabaseUrlInput.trim();
-    const cleanKey = supabaseKeyInput.trim();
-
-    if (!cleanUrl || !cleanUrl.startsWith('http')) {
-      setSupabaseConfigError('Please enter a valid Supabase Project URL (e.g. https://xxxx.supabase.co)');
-      return;
-    }
-    if (!cleanKey || cleanKey.length < 15) {
-      setSupabaseConfigError('Please enter a valid Supabase public anon key (starts with eyJhbGci... or similar)');
-      return;
-    }
-
-    const saved = setSupabaseCredentials(cleanUrl, cleanKey);
-    if (!saved) {
-      setSupabaseConfigError('Could not save credentials. Please check browser permissions.');
-      return;
-    }
-
-    authService.reinitializeSupabase();
-    setShowSupabaseModal(false);
-
-    // Immediately trigger Google OAuth
-    setIsGoogleSigningIn(true);
-    setAuthLoading(true);
-    try {
-      const res = await authService.signInWithGoogle();
-      if (!res.success && res.error) {
-        setAuthError(res.error);
-        setIsGoogleSigningIn(false);
-        setAuthLoading(false);
-      }
+      // On success, Supabase initiates redirect to Google OAuth consent screen
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to Google authentication.';
       setAuthError(msg);
@@ -880,22 +809,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {authError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs flex items-start gap-2.5">
                 <AlertCircle size={15} className="shrink-0 text-rose-400 mt-0.5" />
-                <div className="flex-1 space-y-1.5">
-                  <div>{authError}</div>
-                  {!isSupabaseConfigured() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSupabaseConfigError('');
-                        setShowSupabaseModal(true);
-                      }}
-                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Database size={12} />
-                      <span>Click here to enter your Supabase Project URL &amp; Key</span>
-                    </button>
-                  )}
-                </div>
+                <div className="flex-1">{authError}</div>
               </div>
             )}
 
@@ -1112,22 +1026,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {authError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs flex items-start gap-2.5">
                 <AlertCircle size={15} className="shrink-0 text-rose-400 mt-0.5" />
-                <div className="flex-1 space-y-1.5">
-                  <div>{authError}</div>
-                  {!isSupabaseConfigured() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSupabaseConfigError('');
-                        setShowSupabaseModal(true);
-                      }}
-                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Database size={12} />
-                      <span>Click here to enter your Supabase Project URL &amp; Key</span>
-                    </button>
-                  )}
-                </div>
+                <div className="flex-1">{authError}</div>
               </div>
             )}
 
@@ -1218,156 +1117,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </>
                 )}
               </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Supabase Connection Setup Modal */}
-      {showSupabaseModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
-          <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl relative">
-            <button
-              onClick={() => {
-                setShowSupabaseModal(false);
-                setSupabaseConfigError('');
-              }}
-              className="absolute top-5 right-5 p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
-                <Database size={20} />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">Connect Supabase Project</h3>
-                <p className="text-xs text-neutral-400">Required to enable real Google OAuth login for EventFlow</p>
-              </div>
-            </div>
-
-            <p className="text-xs text-neutral-300 leading-relaxed">
-              Enter your project URL and public anon key from your Supabase dashboard (<strong>Project Settings &rarr; API</strong>).
-              Credentials are securely stored in your browser session for direct authentication.
-            </p>
-
-            {supabaseConfigError && (
-              <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs flex items-center gap-2">
-                <AlertCircle size={15} className="shrink-0 text-rose-400" />
-                <span>{supabaseConfigError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveSupabaseConfig} className="space-y-4">
-              <div>
-                <label className="text-[11px] font-semibold text-neutral-300 uppercase tracking-wider block mb-1.5">
-                  Supabase Project URL
-                </label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://your-project-ref.supabase.co"
-                  value={supabaseUrlInput}
-                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 font-mono"
-                />
-                <span className="text-[10px] text-neutral-500 block mt-1">
-                  Example: <code className="text-neutral-400">https://xyzcompany.supabase.co</code>
-                </span>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-neutral-300 uppercase tracking-wider block mb-1.5">
-                  Supabase Public Anon Key
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="eyJhbGciOi..."
-                  value={supabaseKeyInput}
-                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 font-mono"
-                />
-                <span className="text-[10px] text-neutral-500 block mt-1">
-                  Found in Project Settings &rarr; API &rarr; Project API Keys &rarr; <code className="text-neutral-400">anon public</code>
-                </span>
-              </div>
-
-              {/* Required Redirect URLs to add in Supabase */}
-              <div className="p-3.5 rounded-2xl bg-neutral-950/80 border border-neutral-800 space-y-2 text-xs">
-                <div className="text-[11px] font-semibold text-neutral-300 flex items-center gap-1.5">
-                  <ShieldCheck size={14} className="text-emerald-400" />
-                  <span>Required Redirect URL in Supabase Dashboard</span>
-                </div>
-                <p className="text-[11px] text-neutral-400">
-                  Ensure this URL is added under <strong>Authentication &rarr; URL Configuration &rarr; Redirect URLs</strong>:
-                </p>
-
-                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-neutral-900 border border-neutral-800">
-                  <code className="text-[11px] font-mono text-emerald-400 truncate select-all">
-                    {PRODUCTION_OAUTH_REDIRECT_URL}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(PRODUCTION_OAUTH_REDIRECT_URL);
-                      setCopiedRedirectProd(true);
-                      setTimeout(() => setCopiedRedirectProd(false), 2000);
-                    }}
-                    className="p-1 px-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[10px] font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1"
-                  >
-                    {copiedRedirectProd ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                    <span>{copiedRedirectProd ? 'Copied' : 'Copy'}</span>
-                  </button>
-                </div>
-
-                {typeof window !== 'undefined' && !window.location.origin.includes('eventflow.kre8link.com') && (
-                  <div className="pt-1">
-                    <span className="text-[10px] text-neutral-500 block mb-1">
-                      For testing in this preview container, also add:
-                    </span>
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-neutral-900 border border-neutral-800">
-                      <code className="text-[10px] font-mono text-cyan-400 truncate select-all">
-                        {`${window.location.origin}/auth/callback`}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(`${window.location.origin}/auth/callback`);
-                          setCopiedRedirectDev(true);
-                          setTimeout(() => setCopiedRedirectDev(false), 2000);
-                        }}
-                        className="p-1 px-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[10px] font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1"
-                      >
-                        {copiedRedirectDev ? <Check size={12} className="text-cyan-400" /> : <Copy size={12} />}
-                        <span>{copiedRedirectDev ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSupabaseModal(false);
-                    setSupabaseConfigError('');
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer flex items-center gap-2"
-                >
-                  <Database size={14} />
-                  <span>Connect &amp; Continue with Google</span>
-                </button>
-              </div>
             </form>
           </div>
         </div>

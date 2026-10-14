@@ -1,13 +1,16 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Production URL configured for EventFlow
+// Production origin and official OAuth callback URL configured for EventFlow
 export const PRODUCTION_ORIGIN = 'https://eventflow.kre8link.com';
 export const PRODUCTION_OAUTH_REDIRECT_URL = 'https://eventflow.kre8link.com/auth/callback';
 
-export const STORAGE_URL_KEY = 'eventflow_supabase_url_v1';
-export const STORAGE_KEY_KEY = 'eventflow_supabase_anon_key_v1';
+// Verified EventFlow Supabase project credentials for automatic client initialization
+export const DEFAULT_SUPABASE_URL = 'https://adcurnxwwcyodywkqwnr.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_dadNxKSzFgViQMdalGW8XQ_TlxYADZV';
 
-// Environment variables helper for Supabase
+/**
+ * Safe accessor for environment variables across Vite import.meta, process.env, and runtime window
+ */
 const getEnvVar = (key: string): string => {
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
     return String(import.meta.env[key]).trim();
@@ -25,7 +28,7 @@ const getEnvVar = (key: string): string => {
 };
 
 /**
- * Sanitizes Supabase URL, handling accidental pasting of multiple keys or trailing tokens.
+ * Sanitizes Supabase URL, stripping any accidental trailing keys or quotes.
  */
 export const sanitizeSupabaseUrl = (raw: string): string => {
   if (!raw) return '';
@@ -37,7 +40,7 @@ export const sanitizeSupabaseUrl = (raw: string): string => {
 };
 
 /**
- * Sanitizes Supabase Anon/Publishable Key, stripping quotes or variable name prefixes.
+ * Sanitizes Supabase Anon/Publishable Key, stripping variable names or quotes.
  */
 export const sanitizeSupabaseKey = (raw: string): string => {
   if (!raw) return '';
@@ -49,6 +52,10 @@ export const sanitizeSupabaseKey = (raw: string): string => {
   return cleaned.replace(/["'`;]/g, '').trim();
 };
 
+/**
+ * Returns the configured Supabase Project URL.
+ * Prioritizes standard Vite env vars (VITE_SUPABASE_URL), with fallback to verified project URL.
+ */
 export const getSupabaseUrl = (): string => {
   const envVal = getEnvVar('VITE_SUPABASE_URL') || getEnvVar('SUPABASE_URL');
   const cleanedEnv = sanitizeSupabaseUrl(envVal);
@@ -60,18 +67,14 @@ export const getSupabaseUrl = (): string => {
   ) {
     return cleanedEnv;
   }
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(STORAGE_URL_KEY);
-      const cleanedStored = sanitizeSupabaseUrl(stored || '');
-      if (cleanedStored && cleanedStored.startsWith('http')) return cleanedStored;
-    } catch {
-      // ignore
-    }
-  }
-  return '';
+  return DEFAULT_SUPABASE_URL;
 };
 
+/**
+ * Returns the configured Supabase Anon / Publishable Key.
+ * Prioritizes standard Vite env vars (VITE_SUPABASE_ANON_KEY, VITE_SUPABASE_PUBLISHABLE_KEY),
+ * with fallback to verified project key.
+ */
 export const getSupabaseAnonKey = (): string => {
   const envVal =
     getEnvVar('VITE_SUPABASE_ANON_KEY') ||
@@ -86,16 +89,7 @@ export const getSupabaseAnonKey = (): string => {
   ) {
     return cleanedEnv;
   }
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_KEY);
-      const cleanedStored = sanitizeSupabaseKey(stored || '');
-      if (cleanedStored && cleanedStored.length > 15) return cleanedStored;
-    } catch {
-      // ignore
-    }
-  }
-  return '';
+  return DEFAULT_SUPABASE_ANON_KEY;
 };
 
 /**
@@ -122,7 +116,7 @@ export const isSupabaseConfigured = (): boolean => {
 /**
  * Determines the appropriate OAuth redirect URL based on environment.
  * Production: https://eventflow.kre8link.com/auth/callback
- * Development / Preview: current origin + /auth/callback (or production redirect if configured)
+ * Development / Preview: current origin + /auth/callback
  */
 export const getOAuthRedirectUrl = (): string => {
   // 1. Explicit override via environment variable if defined
@@ -151,16 +145,15 @@ export const getOAuthRedirectUrl = (): string => {
   return PRODUCTION_OAUTH_REDIRECT_URL;
 };
 
+// Singleton Supabase Client
 let activeClient: SupabaseClient | null = null;
-export let supabase: SupabaseClient | null = null;
 
-export const getSupabase = (): SupabaseClient | null => {
-  if (activeClient) return activeClient;
-  if (!isSupabaseConfigured()) return null;
+const initClient = (): SupabaseClient | null => {
   const url = getSupabaseUrl();
   const key = getSupabaseAnonKey();
+  if (!url || !key) return null;
   try {
-    activeClient = createClient(url, key, {
+    return createClient(url, key, {
       auth: {
         autoRefreshToken: true,
         persistSession: true,
@@ -168,61 +161,22 @@ export const getSupabase = (): SupabaseClient | null => {
         flowType: 'pkce',
       },
     });
-    supabase = activeClient;
-    return activeClient;
   } catch (err) {
-    console.error('Error creating Supabase client:', err);
+    console.error('Failed to initialize Supabase client:', err);
     return null;
   }
 };
 
-export const setSupabaseCredentials = (url: string, anonKey: string): boolean => {
-  const cleanUrl = sanitizeSupabaseUrl(url);
-  const cleanKey = sanitizeSupabaseKey(anonKey);
-  if (!cleanUrl.startsWith('http') || cleanKey.length < 15) {
-    return false;
-  }
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_URL_KEY, cleanUrl);
-      localStorage.setItem(STORAGE_KEY_KEY, cleanKey);
-    } catch {
-      // ignore
-    }
-  }
-  try {
-    activeClient = createClient(cleanUrl, cleanKey, {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true,
-        flowType: 'pkce',
-      },
-    });
-    supabase = activeClient;
-    return true;
-  } catch (err) {
-    console.error('Error creating client with provided credentials:', err);
-    return false;
-  }
-};
+activeClient = initClient();
 
-export const clearSupabaseCredentials = (): void => {
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    try {
-      localStorage.removeItem(STORAGE_URL_KEY);
-      localStorage.removeItem(STORAGE_KEY_KEY);
-    } catch {
-      // ignore
-    }
-  }
-  activeClient = null;
-  supabase = null;
-};
+export const supabase: SupabaseClient | null = activeClient;
 
-if (isSupabaseConfigured()) {
-  supabase = getSupabase();
-}
+export const getSupabase = (): SupabaseClient | null => {
+  if (!activeClient) {
+    activeClient = initClient();
+  }
+  return activeClient;
+};
 
 export const getSupabaseConfig = () => ({
   url: getSupabaseUrl(),

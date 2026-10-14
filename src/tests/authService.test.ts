@@ -32,9 +32,9 @@ console.log('--- RUNNING SUPABASE GOOGLE AUTH TEST SUITE ---\n');
 
 // 2. Configuration verification
 {
-  // When no env vars are injected, isSupabaseConfigured should safely return false without throwing
   const isConfigured = isSupabaseConfigured();
-  assert(typeof isConfigured === 'boolean', `isSupabaseConfigured returns boolean (got ${isConfigured})`);
+  assert(isConfigured === true, `isSupabaseConfigured returns true automatically without manual entry (got ${isConfigured})`);
+  assert(authService.getClient() !== null, 'authService.getClient() successfully returns initialized SupabaseClient');
 }
 
 // 3. User mapping for first-time Google sign-in
