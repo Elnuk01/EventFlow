@@ -97,4 +97,21 @@ console.log('--- RUNNING SUPABASE GOOGLE AUTH TEST SUITE ---\n');
   assert(csv.includes('adekunleolaomo@gmail.com'), 'CSV includes user email');
 }
 
+// 6. Hosting deployment configuration verification
+{
+  const fs = await import('fs');
+  const path = await import('path');
+  const vercelConfigPath = path.resolve(process.cwd(), 'vercel.json');
+  assert(fs.existsSync(vercelConfigPath), 'vercel.json exists at root for Vercel SPA routing');
+  const vercelConfig = JSON.parse(fs.readFileSync(vercelConfigPath, 'utf-8'));
+  assert(
+    Array.isArray(vercelConfig.rewrites) &&
+      vercelConfig.rewrites.some((r: { source: string; destination: string }) => r.destination === '/index.html'),
+    'vercel.json rewrites all routes to /index.html'
+  );
+
+  const redirectsPath = path.resolve(process.cwd(), 'public/_redirects');
+  assert(fs.existsSync(redirectsPath), 'public/_redirects exists for Netlify/Cloudflare SPA routing');
+}
+
 console.log('--- ALL AUTH TEST CASES PASSED SUCCESSFULLY! ---');

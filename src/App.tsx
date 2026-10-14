@@ -838,6 +838,11 @@ export default function App() {
       <AuthCallbackView
         onComplete={(user) => {
           if (user) {
+            try {
+              sessionStorage.setItem('eventflow_view', 'app');
+            } catch {
+              // ignore
+            }
             setCurrentUser(user);
             setCurrentView('app');
           } else {

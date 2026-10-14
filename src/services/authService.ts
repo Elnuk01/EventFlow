@@ -233,9 +233,24 @@ class AuthService {
 
       // 2. If PKCE authorization code exists in URL query, exchange it for session
       if (code) {
-        const { data, error } = await client.auth.exchangeCodeForSession(code);
-        if (error) {
-          // If code was already exchanged by background handler, check if session is active
+        try {
+          const { data, error } = await client.auth.exchangeCodeForSession(code);
+          if (!error && data.session?.user) {
+            const authUser = this.mapSupabaseUserToAuthUser(data.session.user);
+            this.currentUser = authUser;
+            this.persistUser(authUser);
+            this.notify();
+            this.safelySyncProfileToDatabase(data.session.user, authUser);
+            return { success: true, user: authUser };
+          }
+        } catch {
+          // Fall through to polling getSession if direct exchange threw or was already handled
+        }
+
+        // If direct code exchange returned error or code was already consumed by detectSessionInUrl,
+        // poll getSession for up to 1 second to allow background exchange to settle
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise((r) => setTimeout(r, 200));
           const { data: retryCheck } = await client.auth.getSession();
           if (retryCheck.session?.user) {
             const authUser = this.mapSupabaseUserToAuthUser(retryCheck.session.user);
@@ -245,15 +260,6 @@ class AuthService {
             this.safelySyncProfileToDatabase(retryCheck.session.user, authUser);
             return { success: true, user: authUser };
           }
-          return { success: false, error: error.message };
-        }
-        if (data.session?.user) {
-          const authUser = this.mapSupabaseUserToAuthUser(data.session.user);
-          this.currentUser = authUser;
-          this.persistUser(authUser);
-          this.notify();
-          this.safelySyncProfileToDatabase(data.session.user, authUser);
-          return { success: true, user: authUser };
         }
       }
 
