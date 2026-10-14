@@ -2,6 +2,7 @@ import { User } from '@supabase/supabase-js';
 import { AuthUser } from '../types';
 import {
   supabase,
+  getSupabase,
   isSupabaseConfigured,
   getOAuthRedirectUrl,
   PRODUCTION_OAUTH_REDIRECT_URL,
@@ -58,10 +59,11 @@ class AuthService {
     }
 
     // 2. Real Supabase Session Restoration
-    if (isSupabaseConfigured() && supabase) {
+    const client = this.getClient();
+    if (isSupabaseConfigured() && client) {
       this.isRestoringSession = true;
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session }, error } = await client.auth.getSession();
         if (!error && session?.user) {
           const mappedUser = this.mapSupabaseUserToAuthUser(session.user);
           this.currentUser = mappedUser;
@@ -77,7 +79,7 @@ class AuthService {
         }
 
         // Listen for live auth state changes (sign-in, token refresh, sign-out)
-        supabase.auth.onAuthStateChange(async (event, session) => {
+        client.auth.onAuthStateChange(async (event, session) => {
           if (session?.user) {
             const mappedUser = this.mapSupabaseUserToAuthUser(session.user);
             this.currentUser = mappedUser;
@@ -96,6 +98,14 @@ class AuthService {
         this.isRestoringSession = false;
       }
     }
+  }
+
+  public getClient() {
+    return supabase || getSupabase();
+  }
+
+  public reinitializeSupabase() {
+    return this.init();
   }
 
   public getCurrentUser(): AuthUser | null {
@@ -140,17 +150,18 @@ class AuthService {
    * Invokes supabase.auth.signInWithOAuth with Google provider and redirect URL.
    */
   public async signInWithGoogle(customRedirectUrl?: string): Promise<{ success: boolean; error?: string }> {
-    if (!isSupabaseConfigured() || !supabase) {
+    const client = this.getClient();
+    if (!isSupabaseConfigured() || !client) {
       return {
         success: false,
         error:
-          'Supabase project is not configured. Please define VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables to enable Google authentication.',
+          'Supabase project is not configured. Please define VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables or connect your Supabase project credentials.',
       };
     }
 
     try {
       const redirectUrl = customRedirectUrl || getOAuthRedirectUrl();
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await client.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUrl,
@@ -182,7 +193,8 @@ class AuthService {
    * Exchanges authorization code for session, handles PKCE/tokens, maps user, and sets session.
    */
   public async handleAuthCallback(): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
-    if (!isSupabaseConfigured() || !supabase) {
+    const client = this.getClient();
+    if (!isSupabaseConfigured() || !client) {
       return {
         success: false,
         error:
@@ -209,7 +221,7 @@ class AuthService {
       }
 
       // 1. Check if Supabase's detectSessionInUrl already successfully resolved the session
-      const { data: immediateCheck } = await supabase.auth.getSession();
+      const { data: immediateCheck } = await client.auth.getSession();
       if (immediateCheck.session?.user) {
         const authUser = this.mapSupabaseUserToAuthUser(immediateCheck.session.user);
         this.currentUser = authUser;
@@ -221,10 +233,10 @@ class AuthService {
 
       // 2. If PKCE authorization code exists in URL query, exchange it for session
       if (code) {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        const { data, error } = await client.auth.exchangeCodeForSession(code);
         if (error) {
           // If code was already exchanged by background handler, check if session is active
-          const { data: retryCheck } = await supabase.auth.getSession();
+          const { data: retryCheck } = await client.auth.getSession();
           if (retryCheck.session?.user) {
             const authUser = this.mapSupabaseUserToAuthUser(retryCheck.session.user);
             this.currentUser = authUser;
@@ -246,7 +258,7 @@ class AuthService {
       }
 
       // 3. Check current session if implicit tokens were in hash or after exchange
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await client.auth.getSession();
       if (sessionError) {
         return { success: false, error: sessionError.message };
       }
@@ -263,7 +275,7 @@ class AuthService {
       // 4. Brief listener wait for async Supabase exchange resolution
       const sessionUser = await new Promise<User | null>((resolve) => {
         const timeout = setTimeout(() => resolve(null), 1200);
-        const { data: authListener } = supabase!.auth.onAuthStateChange((_event, s) => {
+        const { data: authListener } = client.auth.onAuthStateChange((_event, s) => {
           if (s?.user) {
             clearTimeout(timeout);
             authListener.subscription.unsubscribe();
@@ -337,9 +349,10 @@ class AuthService {
    * only if the table exists and RLS permits, without breaking if the application uses standard auth.users.
    */
   private async safelySyncProfileToDatabase(supabaseUser: User, authUser: AuthUser): Promise<void> {
-    if (!supabase) return;
+    const client = this.getClient();
+    if (!client) return;
     try {
-      await supabase
+      await client
         .from('profiles')
         .upsert(
           {
@@ -534,9 +547,10 @@ class AuthService {
   }
 
   public async logout(): Promise<void> {
-    if (isSupabaseConfigured() && supabase) {
+    const client = this.getClient();
+    if (isSupabaseConfigured() && client) {
       try {
-        await supabase.auth.signOut();
+        await client.auth.signOut();
       } catch (err) {
         console.warn('Error signing out of Supabase:', err);
       }
