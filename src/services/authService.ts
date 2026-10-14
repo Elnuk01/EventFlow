@@ -155,7 +155,7 @@ class AuthService {
       return {
         success: false,
         error:
-          'Supabase project is not configured. Please define VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables or connect your Supabase project credentials.',
+          'Unable to initialize authentication service. Please check your network connection and verify VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY build settings.',
       };
     }
 
@@ -198,7 +198,7 @@ class AuthService {
       return {
         success: false,
         error:
-          'Supabase is not configured for OAuth callback processing. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+          'Authentication service is initializing. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
       };
     }
 

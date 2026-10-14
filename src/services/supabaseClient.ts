@@ -8,13 +8,62 @@ export const PRODUCTION_OAUTH_REDIRECT_URL = 'https://eventflow.kre8link.com/aut
 export const DEFAULT_SUPABASE_URL = 'https://adcurnxwwcyodywkqwnr.supabase.co';
 export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_dadNxKSzFgViQMdalGW8XQ_TlxYADZV';
 
+// Clean up any stale manual config keys from previous versions
+if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+  try {
+    localStorage.removeItem('eventflow_supabase_url');
+    localStorage.removeItem('eventflow_supabase_key');
+    localStorage.removeItem('eventflow_custom_supabase_url_v1');
+    localStorage.removeItem('eventflow_custom_supabase_key_v1');
+    localStorage.removeItem('supabase_project_url');
+    localStorage.removeItem('supabase_anon_key');
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * Safe accessor for environment variables across Vite import.meta, process.env, and runtime window
+ * Direct static read for Vite compiler variable replacement.
+ * Vite requires static dot-property access (e.g. import.meta.env.VITE_...)
+ * to replace variables during 'npm run build'.
+ * Also supports 'SUPERBASE' spelling tolerance for deployment environments.
+ */
+const readStaticViteEnv = (key: string): string => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const viteEnv = import.meta.env as Record<string, string | undefined>;
+      switch (key) {
+        case 'VITE_SUPABASE_URL':
+          return import.meta.env.VITE_SUPABASE_URL || '';
+        case 'VITE_SUPERBASE_URL':
+          return viteEnv.VITE_SUPERBASE_URL || '';
+        case 'VITE_SUPABASE_ANON_KEY':
+          return import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+        case 'VITE_SUPERBASE_ANON_KEY':
+          return viteEnv.VITE_SUPERBASE_ANON_KEY || '';
+        case 'VITE_SUPABASE_PUBLISHABLE_KEY':
+          return viteEnv.VITE_SUPABASE_PUBLISHABLE_KEY || '';
+        case 'VITE_SUPERBASE_PUBLISHABLE_KEY':
+          return viteEnv.VITE_SUPERBASE_PUBLISHABLE_KEY || '';
+        case 'VITE_AUTH_REDIRECT_URL':
+          return viteEnv.VITE_AUTH_REDIRECT_URL || '';
+        default:
+          return viteEnv[key] || '';
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+};
+
+/**
+ * Fallback dynamic accessor across process.env and runtime window
  */
 const getEnvVar = (key: string): string => {
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-    return String(import.meta.env[key]).trim();
-  }
+  const viteVal = readStaticViteEnv(key);
+  if (viteVal) return String(viteVal).trim();
+
   if (typeof process !== 'undefined' && process.env && process.env[key]) {
     return String(process.env[key]).trim();
   }
@@ -54,10 +103,15 @@ export const sanitizeSupabaseKey = (raw: string): string => {
 
 /**
  * Returns the configured Supabase Project URL.
- * Prioritizes standard Vite env vars (VITE_SUPABASE_URL), with fallback to verified project URL.
+ * Checks standard VITE_SUPABASE_URL, spelling tolerance VITE_SUPERBASE_URL,
+ * with fallback to verified EventFlow project URL.
  */
 export const getSupabaseUrl = (): string => {
-  const envVal = getEnvVar('VITE_SUPABASE_URL') || getEnvVar('SUPABASE_URL');
+  const envVal =
+    getEnvVar('VITE_SUPABASE_URL') ||
+    getEnvVar('VITE_SUPERBASE_URL') ||
+    getEnvVar('SUPABASE_URL') ||
+    getEnvVar('SUPERBASE_URL');
   const cleanedEnv = sanitizeSupabaseUrl(envVal);
   if (
     cleanedEnv &&
@@ -72,14 +126,17 @@ export const getSupabaseUrl = (): string => {
 
 /**
  * Returns the configured Supabase Anon / Publishable Key.
- * Prioritizes standard Vite env vars (VITE_SUPABASE_ANON_KEY, VITE_SUPABASE_PUBLISHABLE_KEY),
- * with fallback to verified project key.
+ * Checks VITE_SUPABASE_ANON_KEY, VITE_SUPABASE_PUBLISHABLE_KEY,
+ * spelling tolerance VITE_SUPERBASE_ANON_KEY, with fallback to verified project key.
  */
 export const getSupabaseAnonKey = (): string => {
   const envVal =
     getEnvVar('VITE_SUPABASE_ANON_KEY') ||
+    getEnvVar('VITE_SUPERBASE_ANON_KEY') ||
     getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
-    getEnvVar('SUPABASE_ANON_KEY');
+    getEnvVar('VITE_SUPERBASE_PUBLISHABLE_KEY') ||
+    getEnvVar('SUPABASE_ANON_KEY') ||
+    getEnvVar('SUPERBASE_ANON_KEY');
   const cleanedEnv = sanitizeSupabaseKey(envVal);
   if (
     cleanedEnv &&
@@ -135,7 +192,7 @@ export const getOAuthRedirectUrl = (): string => {
     if (origin.includes('eventflow.kre8link.com')) {
       return PRODUCTION_OAUTH_REDIRECT_URL;
     }
-    // In local development or AI Studio preview container
+    // In local development or preview container
     if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('.run.app')) {
       return `${origin}/auth/callback`;
     }

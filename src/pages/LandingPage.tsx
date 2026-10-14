@@ -32,7 +32,6 @@ import {
 } from 'lucide-react';
 import { formatDuration } from '../utils/timeUtils';
 import { authService } from '../services/authService';
-import { isSupabaseConfigured } from '../services/supabaseClient';
 import { AuthUser } from '../types';
 
 interface LandingPageProps {
