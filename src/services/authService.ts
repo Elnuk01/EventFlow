@@ -7,6 +7,7 @@ import {
   getOAuthRedirectUrl,
   PRODUCTION_OAUTH_REDIRECT_URL,
 } from './supabaseClient';
+import { auditService } from './auditService';
 
 const AUTH_USER_KEY = 'eventflow_auth_current_user_v1';
 const REGISTERED_USERS_KEY = 'eventflow_registered_users_v1';
@@ -17,6 +18,30 @@ class AuthService {
   private listeners: Set<(user: AuthUser | null) => void> = new Set();
   private userListListeners: Set<(users: AuthUser[]) => void> = new Set();
   private isRestoringSession: boolean = false;
+  private newlyRegisteredIds: Set<string> = new Set();
+
+  /**
+   * Records authentication audit events (registration and confirmed login_success)
+   */
+  private recordAuthSuccessAudit(user: AuthUser, provider: 'google' | 'email', isRegistrationOverride?: boolean) {
+    const isRegistration = isRegistrationOverride ?? this.newlyRegisteredIds.has(user.id);
+    if (isRegistration) {
+      this.newlyRegisteredIds.delete(user.id);
+      auditService.logEvent({
+        event_type: 'registration',
+        provider,
+        user_id: user.id,
+        user_email: user.email,
+      }).catch((err) => console.warn('[AuthService] Registration audit log failed:', err));
+    }
+
+    auditService.logEvent({
+      event_type: 'login_success',
+      provider,
+      user_id: user.id,
+      user_email: user.email,
+    }).catch((err) => console.warn('[AuthService] Login audit log failed:', err));
+  }
 
   constructor() {
     this.init();
@@ -173,6 +198,11 @@ class AuthService {
       });
 
       if (error) {
+        auditService.logEvent({
+          event_type: 'login_failure',
+          provider: 'google',
+          error_category: auditService.sanitizeErrorCategory(error.message),
+        }).catch(() => {});
         return { success: false, error: error.message };
       }
 
@@ -184,6 +214,11 @@ class AuthService {
       return { success: true };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to initiate Google sign-in.';
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'google',
+        error_category: auditService.sanitizeErrorCategory(msg),
+      }).catch(() => {});
       return { success: false, error: msg };
     }
   }
@@ -217,18 +252,29 @@ class AuthService {
         hashParams.get('error');
 
       if (errorParam) {
+        auditService.logEvent({
+          event_type: 'login_failure',
+          provider: 'google',
+          error_category: auditService.sanitizeErrorCategory(errorParam),
+        }).catch(() => {});
         return { success: false, error: errorParam };
       }
+
+      // Helper to cleanly process and audit verified user session
+      const handleCallbackSuccess = (rawUser: User) => {
+        const authUser = this.mapSupabaseUserToAuthUser(rawUser);
+        this.currentUser = authUser;
+        this.persistUser(authUser);
+        this.notify();
+        this.safelySyncProfileToDatabase(rawUser, authUser);
+        this.recordAuthSuccessAudit(authUser, 'google');
+        return { success: true, user: authUser };
+      };
 
       // 1. Check if Supabase's detectSessionInUrl already successfully resolved the session
       const { data: immediateCheck } = await client.auth.getSession();
       if (immediateCheck.session?.user) {
-        const authUser = this.mapSupabaseUserToAuthUser(immediateCheck.session.user);
-        this.currentUser = authUser;
-        this.persistUser(authUser);
-        this.notify();
-        this.safelySyncProfileToDatabase(immediateCheck.session.user, authUser);
-        return { success: true, user: authUser };
+        return handleCallbackSuccess(immediateCheck.session.user);
       }
 
       // 2. If PKCE authorization code exists in URL query, exchange it for session
@@ -236,12 +282,7 @@ class AuthService {
         try {
           const { data, error } = await client.auth.exchangeCodeForSession(code);
           if (!error && data.session?.user) {
-            const authUser = this.mapSupabaseUserToAuthUser(data.session.user);
-            this.currentUser = authUser;
-            this.persistUser(authUser);
-            this.notify();
-            this.safelySyncProfileToDatabase(data.session.user, authUser);
-            return { success: true, user: authUser };
+            return handleCallbackSuccess(data.session.user);
           }
         } catch {
           // Fall through to polling getSession if direct exchange threw or was already handled
@@ -253,12 +294,7 @@ class AuthService {
           await new Promise((r) => setTimeout(r, 200));
           const { data: retryCheck } = await client.auth.getSession();
           if (retryCheck.session?.user) {
-            const authUser = this.mapSupabaseUserToAuthUser(retryCheck.session.user);
-            this.currentUser = authUser;
-            this.persistUser(authUser);
-            this.notify();
-            this.safelySyncProfileToDatabase(retryCheck.session.user, authUser);
-            return { success: true, user: authUser };
+            return handleCallbackSuccess(retryCheck.session.user);
           }
         }
       }
@@ -266,16 +302,16 @@ class AuthService {
       // 3. Check current session if implicit tokens were in hash or after exchange
       const { data: { session }, error: sessionError } = await client.auth.getSession();
       if (sessionError) {
+        auditService.logEvent({
+          event_type: 'login_failure',
+          provider: 'google',
+          error_category: auditService.sanitizeErrorCategory(sessionError.message),
+        }).catch(() => {});
         return { success: false, error: sessionError.message };
       }
 
       if (session?.user) {
-        const authUser = this.mapSupabaseUserToAuthUser(session.user);
-        this.currentUser = authUser;
-        this.persistUser(authUser);
-        this.notify();
-        this.safelySyncProfileToDatabase(session.user, authUser);
-        return { success: true, user: authUser };
+        return handleCallbackSuccess(session.user);
       }
 
       // 4. Brief listener wait for async Supabase exchange resolution
@@ -291,13 +327,14 @@ class AuthService {
       });
 
       if (sessionUser) {
-        const authUser = this.mapSupabaseUserToAuthUser(sessionUser);
-        this.currentUser = authUser;
-        this.persistUser(authUser);
-        this.notify();
-        this.safelySyncProfileToDatabase(sessionUser, authUser);
-        return { success: true, user: authUser };
+        return handleCallbackSuccess(sessionUser);
       }
+
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'google',
+        error_category: 'oauth_exchange_failed',
+      }).catch(() => {});
 
       return {
         success: false,
@@ -305,6 +342,11 @@ class AuthService {
       };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error processing authentication callback.';
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'google',
+        error_category: auditService.sanitizeErrorCategory(msg),
+      }).catch(() => {});
       return { success: false, error: msg };
     }
   }
@@ -333,6 +375,9 @@ class AuthService {
     // Check if user already exists in registered directory to preserve organization/role
     const registered = this.getRegisteredUsers();
     const existing = registered.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (!existing) {
+      this.newlyRegisteredIds.add(supabaseUser.id);
+    }
 
     const authUser: AuthUser = {
       id: supabaseUser.id,
@@ -441,6 +486,7 @@ class AuthService {
     this.persistUser(finalUser);
     this.notify();
     this.notifyUsersChanged();
+    this.recordAuthSuccessAudit(finalUser, 'google', existingIndex < 0);
     return { success: true, user: finalUser };
   }
 
@@ -450,9 +496,21 @@ class AuthService {
   public login(email: string, password?: string): { success: boolean; user?: AuthUser; error?: string } {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'email',
+        user_email: cleanEmail,
+        error_category: 'invalid_credentials',
+      }).catch(() => {});
       return { success: false, error: 'Please enter a valid email address' };
     }
     if (!password || password.length < 4) {
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'email',
+        user_email: cleanEmail,
+        error_category: 'invalid_credentials',
+      }).catch(() => {});
       return { success: false, error: 'Password must be at least 4 characters' };
     }
 
@@ -471,6 +529,7 @@ class AuthService {
       this.currentUser = updatedUser;
       this.persistUser(updatedUser);
       this.notify();
+      this.recordAuthSuccessAudit(updatedUser, 'email', false);
       return { success: true, user: updatedUser };
     }
 
@@ -490,6 +549,7 @@ class AuthService {
     this.persistUser(newUser);
     this.notify();
     this.notifyUsersChanged();
+    this.recordAuthSuccessAudit(newUser, 'email', true);
     return { success: true, user: newUser };
   }
 
@@ -504,12 +564,29 @@ class AuthService {
     role?: 'director' | 'producer' | 'operator' | 'speaker';
   }): { success: boolean; user?: AuthUser; error?: string } {
     if (!data.name.trim()) {
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'email',
+        error_category: 'invalid_credentials',
+      }).catch(() => {});
       return { success: false, error: 'Please enter your full name' };
     }
     if (!data.email.trim() || !data.email.includes('@')) {
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'email',
+        user_email: data.email,
+        error_category: 'invalid_credentials',
+      }).catch(() => {});
       return { success: false, error: 'Please enter a valid email address' };
     }
     if (data.password && data.password.length < 4) {
+      auditService.logEvent({
+        event_type: 'login_failure',
+        provider: 'email',
+        user_email: data.email,
+        error_category: 'invalid_credentials',
+      }).catch(() => {});
       return { success: false, error: 'Password must be at least 4 characters' };
     }
 
@@ -530,6 +607,7 @@ class AuthService {
       this.persistUser(updatedUser);
       this.notify();
       this.notifyUsersChanged();
+      this.recordAuthSuccessAudit(updatedUser, 'email', false);
       return { success: true, user: updatedUser };
     }
 
@@ -549,10 +627,25 @@ class AuthService {
     this.persistUser(newUser);
     this.notify();
     this.notifyUsersChanged();
+    this.recordAuthSuccessAudit(newUser, 'email', true);
     return { success: true, user: newUser };
   }
 
   public async logout(): Promise<void> {
+    const userToLog = this.currentUser;
+    if (userToLog) {
+      try {
+        await auditService.logEvent({
+          event_type: 'logout',
+          provider: userToLog.authProvider || 'google',
+          user_id: userToLog.id,
+          user_email: userToLog.email,
+        });
+      } catch (err) {
+        console.warn('[AuthService] Logout audit logging deferred:', err);
+      }
+    }
+
     const client = this.getClient();
     if (isSupabaseConfigured() && client) {
       try {

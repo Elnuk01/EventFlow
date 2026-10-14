@@ -22,9 +22,13 @@ import {
   KeyRound,
   ArrowLeft,
   Link as LinkIcon,
+  Database,
 } from 'lucide-react';
 import { authService } from '../services/authService';
-import { AuthUser } from '../types';
+import { auditService } from '../services/auditService';
+import { AuthUser, AuthAuditLogEntry } from '../types';
+import { AuditLogsView } from '../components/admin/AuditLogsView';
+import { SqlMigrationView } from '../components/admin/SqlMigrationView';
 
 interface AdminPageProps {
   currentUser?: AuthUser | null;
@@ -33,6 +37,12 @@ interface AdminPageProps {
 
 export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onNavigateToApp }) => {
   const [users, setUsers] = useState<AuthUser[]>(() => authService.getRegisteredUsers());
+  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'sql'>('users');
+  const [auditLogs, setAuditLogs] = useState<AuthAuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState<boolean>(false);
+  const [tableStatus, setTableStatus] = useState<{ exists: boolean; message: string } | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [providerFilter, setProviderFilter] = useState<'all' | 'google' | 'email'>('all');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -82,6 +92,88 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onNavigateToA
     });
     return unsubscribe;
   }, []);
+
+  // Load and subscribe to real-time audit logs & database table status
+  useEffect(() => {
+    let isMounted = true;
+    async function loadAuditData() {
+      setAuditLoading(true);
+      try {
+        const [logs, status] = await Promise.all([
+          auditService.getAuditLogs(),
+          auditService.checkDatabaseTableStatus(),
+        ]);
+        if (isMounted) {
+          setAuditLogs(logs);
+          setTableStatus(status);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (isMounted) setAuditLoading(false);
+      }
+    }
+
+    loadAuditData();
+
+    const unsubscribe = auditService.subscribe((updated) => {
+      setAuditLogs(updated);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleRefreshAudit = async () => {
+    setAuditLoading(true);
+    try {
+      const [logs, status] = await Promise.all([
+        auditService.getAuditLogs(),
+        auditService.checkDatabaseTableStatus(),
+      ]);
+      setAuditLogs(logs);
+      setTableStatus(status);
+    } catch {
+      // ignore
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleSyncPending = async () => {
+    setIsSyncing(true);
+    setSyncNotice(null);
+    try {
+      const res = await auditService.syncPendingLogsToDatabase();
+      if (res.error) {
+        setSyncNotice(`Notice: ${res.error}`);
+      } else {
+        setSyncNotice(`Successfully synchronized ${res.syncedCount} log(s) to Supabase.`);
+        await handleRefreshAudit();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Sync failed';
+      setSyncNotice(`Sync error: ${msg}`);
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncNotice(null), 4000);
+    }
+  };
+
+  const handleExportAuditCSV = () => {
+    const csv = auditService.exportLogsAsCSV(auditLogs);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `eventflow-audit-logs-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const handleUnlock = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -394,19 +486,86 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onNavigateToA
           </div>
         </div>
 
-        {/* Title & Action Strip */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800/80 pb-5">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-              <span>Registered Users Directory &amp; Export</span>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-neutral-900 text-emerald-400 border border-neutral-800">
-                {users.length} Total
-              </span>
-            </h1>
-            <p className="text-xs text-neutral-400 mt-1">
-              Manage accounts, directory lists, and export user records for outreach or event distribution.
-            </p>
-          </div>
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1.5 p-1 bg-neutral-900 border border-neutral-800 rounded-2xl w-fit flex-wrap">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === 'users' ? 'bg-neutral-800 text-white shadow' : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            <Users size={14} />
+            <span>Registered Accounts</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-neutral-950 font-mono text-neutral-300">
+              {users.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === 'audit' ? 'bg-neutral-800 text-white shadow' : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            <ShieldCheck size={14} className="text-emerald-400" />
+            <span>Authentication Audit Logs</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-neutral-950 font-mono text-emerald-400">
+              {auditLogs.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('sql')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === 'sql' ? 'bg-neutral-800 text-white shadow' : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            <Database size={14} className="text-cyan-400" />
+            <span>Supabase SQL Migration</span>
+            {tableStatus?.exists ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-400" title="Table connected" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Migration pending" />
+            )}
+          </button>
+        </div>
+
+        {activeTab === 'audit' && (
+          <AuditLogsView
+            logs={auditLogs}
+            isLoading={auditLoading}
+            tableStatus={tableStatus}
+            onRefresh={handleRefreshAudit}
+            onSyncPending={handleSyncPending}
+            onExportCSV={handleExportAuditCSV}
+            onNavigateToSqlMigration={() => setActiveTab('sql')}
+            isSyncing={isSyncing}
+            syncNotice={syncNotice}
+          />
+        )}
+
+        {activeTab === 'sql' && (
+          <SqlMigrationView
+            tableStatus={tableStatus}
+            onRefreshStatus={handleRefreshAudit}
+          />
+        )}
+
+        {activeTab === 'users' && (
+          <>
+            {/* Title & Action Strip */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800/80 pb-5">
+              <div>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                  <span>Registered Users Directory &amp; Export</span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-neutral-900 text-emerald-400 border border-neutral-800">
+                    {users.length} Total
+                  </span>
+                </h1>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Manage accounts, directory lists, and export user records for outreach or event distribution.
+                </p>
+              </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -730,6 +889,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onNavigateToA
             </table>
           </div>
         </div>
+        </>
+        )}
 
         {/* Add Modal */}
         {isAddModalOpen && (
