@@ -1,20 +1,30 @@
+import { User } from '@supabase/supabase-js';
 import { AuthUser } from '../types';
+import {
+  supabase,
+  isSupabaseConfigured,
+  getOAuthRedirectUrl,
+  PRODUCTION_OAUTH_REDIRECT_URL,
+} from './supabaseClient';
 
 const AUTH_USER_KEY = 'eventflow_auth_current_user_v1';
 const REGISTERED_USERS_KEY = 'eventflow_registered_users_v1';
 
 class AuthService {
   private currentUser: AuthUser | null = null;
+  private inMemoryRegisteredUsers: AuthUser[] = [];
   private listeners: Set<(user: AuthUser | null) => void> = new Set();
   private userListListeners: Set<(users: AuthUser[]) => void> = new Set();
+  private isRestoringSession: boolean = false;
 
   constructor() {
     this.init();
   }
 
-  private init() {
+  private async init() {
     if (typeof window === 'undefined') return;
 
+    // 1. Initial cached local user for instant UI rendering without flash
     try {
       const stored = localStorage.getItem(AUTH_USER_KEY);
       if (stored) {
@@ -46,6 +56,46 @@ class AuthService {
     } catch {
       // ignore
     }
+
+    // 2. Real Supabase Session Restoration
+    if (isSupabaseConfigured() && supabase) {
+      this.isRestoringSession = true;
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (!error && session?.user) {
+          const mappedUser = this.mapSupabaseUserToAuthUser(session.user);
+          this.currentUser = mappedUser;
+          this.persistUser(mappedUser);
+          this.notify();
+          this.safelySyncProfileToDatabase(session.user, mappedUser);
+        } else if (this.currentUser?.authProvider === 'google' && !session?.user) {
+          // If stored user was from Google but the Supabase session is expired or revoked,
+          // clear the expired session so unauthorized access is safely revoked
+          this.currentUser = null;
+          this.persistUser(null);
+          this.notify();
+        }
+
+        // Listen for live auth state changes (sign-in, token refresh, sign-out)
+        supabase.auth.onAuthStateChange(async (event, session) => {
+          if (session?.user) {
+            const mappedUser = this.mapSupabaseUserToAuthUser(session.user);
+            this.currentUser = mappedUser;
+            this.persistUser(mappedUser);
+            this.notify();
+            this.safelySyncProfileToDatabase(session.user, mappedUser);
+          } else if (event === 'SIGNED_OUT') {
+            this.currentUser = null;
+            this.persistUser(null);
+            this.notify();
+          }
+        });
+      } catch (err) {
+        console.warn('Supabase auth session restoration error:', err);
+      } finally {
+        this.isRestoringSession = false;
+      }
+    }
   }
 
   public getCurrentUser(): AuthUser | null {
@@ -54,6 +104,10 @@ class AuthService {
 
   public isAuthenticated(): boolean {
     return this.currentUser !== null;
+  }
+
+  public isRestoring(): boolean {
+    return this.isRestoringSession;
   }
 
   public subscribe(callback: (user: AuthUser | null) => void): () => void {
@@ -82,7 +136,236 @@ class AuthService {
   }
 
   /**
-   * Authenticate or register an account with Google
+   * Real Supabase Google OAuth sign in flow.
+   * Invokes supabase.auth.signInWithOAuth with Google provider and redirect URL.
+   */
+  public async signInWithGoogle(customRedirectUrl?: string): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return {
+        success: false,
+        error:
+          'Supabase project is not configured. Please define VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables to enable Google authentication.',
+      };
+    }
+
+    try {
+      const redirectUrl = customRedirectUrl || getOAuthRedirectUrl();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      // If Supabase returns an explicit OAuth redirect URL in data
+      if (data?.url && typeof window !== 'undefined') {
+        window.location.assign(data.url);
+      }
+
+      return { success: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to initiate Google sign-in.';
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Handles OAuth callback from Supabase at /auth/callback or root.
+   * Exchanges authorization code for session, handles PKCE/tokens, maps user, and sets session.
+   */
+  public async handleAuthCallback(): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return {
+        success: false,
+        error:
+          'Supabase is not configured for OAuth callback processing. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+      };
+    }
+
+    try {
+      if (typeof window === 'undefined') {
+        return { success: false, error: 'Cannot process callback on server.' };
+      }
+
+      const params = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const code = params.get('code');
+      const errorParam =
+        params.get('error_description') ||
+        params.get('error') ||
+        hashParams.get('error_description') ||
+        hashParams.get('error');
+
+      if (errorParam) {
+        return { success: false, error: errorParam };
+      }
+
+      // 1. Check if Supabase's detectSessionInUrl already successfully resolved the session
+      const { data: immediateCheck } = await supabase.auth.getSession();
+      if (immediateCheck.session?.user) {
+        const authUser = this.mapSupabaseUserToAuthUser(immediateCheck.session.user);
+        this.currentUser = authUser;
+        this.persistUser(authUser);
+        this.notify();
+        this.safelySyncProfileToDatabase(immediateCheck.session.user, authUser);
+        return { success: true, user: authUser };
+      }
+
+      // 2. If PKCE authorization code exists in URL query, exchange it for session
+      if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          // If code was already exchanged by background handler, check if session is active
+          const { data: retryCheck } = await supabase.auth.getSession();
+          if (retryCheck.session?.user) {
+            const authUser = this.mapSupabaseUserToAuthUser(retryCheck.session.user);
+            this.currentUser = authUser;
+            this.persistUser(authUser);
+            this.notify();
+            this.safelySyncProfileToDatabase(retryCheck.session.user, authUser);
+            return { success: true, user: authUser };
+          }
+          return { success: false, error: error.message };
+        }
+        if (data.session?.user) {
+          const authUser = this.mapSupabaseUserToAuthUser(data.session.user);
+          this.currentUser = authUser;
+          this.persistUser(authUser);
+          this.notify();
+          this.safelySyncProfileToDatabase(data.session.user, authUser);
+          return { success: true, user: authUser };
+        }
+      }
+
+      // 3. Check current session if implicit tokens were in hash or after exchange
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        return { success: false, error: sessionError.message };
+      }
+
+      if (session?.user) {
+        const authUser = this.mapSupabaseUserToAuthUser(session.user);
+        this.currentUser = authUser;
+        this.persistUser(authUser);
+        this.notify();
+        this.safelySyncProfileToDatabase(session.user, authUser);
+        return { success: true, user: authUser };
+      }
+
+      // 4. Brief listener wait for async Supabase exchange resolution
+      const sessionUser = await new Promise<User | null>((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 1200);
+        const { data: authListener } = supabase!.auth.onAuthStateChange((_event, s) => {
+          if (s?.user) {
+            clearTimeout(timeout);
+            authListener.subscription.unsubscribe();
+            resolve(s.user);
+          }
+        });
+      });
+
+      if (sessionUser) {
+        const authUser = this.mapSupabaseUserToAuthUser(sessionUser);
+        this.currentUser = authUser;
+        this.persistUser(authUser);
+        this.notify();
+        this.safelySyncProfileToDatabase(sessionUser, authUser);
+        return { success: true, user: authUser };
+      }
+
+      return {
+        success: false,
+        error: 'No active session found after Google authentication. Please try signing in again.',
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error processing authentication callback.';
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Maps Supabase User to EventFlow AuthUser and registers in local directory.
+   * Handles first-time account creation vs returning-user login.
+   */
+  public mapSupabaseUserToAuthUser(supabaseUser: User): AuthUser {
+    const meta = supabaseUser.user_metadata || {};
+    const email = (supabaseUser.email || '').toLowerCase();
+    const fullName =
+      meta.full_name ||
+      meta.name ||
+      (email.includes('@')
+        ? email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+        : 'Google User');
+
+    const avatar =
+      meta.avatar_url ||
+      meta.picture ||
+      `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=059669&color=fff`;
+
+    const nowIso = new Date().toISOString();
+
+    // Check if user already exists in registered directory to preserve organization/role
+    const registered = this.getRegisteredUsers();
+    const existing = registered.find((u) => u.email.toLowerCase() === email.toLowerCase());
+
+    const authUser: AuthUser = {
+      id: supabaseUser.id,
+      name: fullName,
+      email,
+      organization: existing?.organization || meta.organization || 'EventFlow Productions',
+      role: existing?.role || (meta.role as 'director' | 'producer' | 'operator' | 'speaker') || 'director',
+      avatar,
+      authProvider: 'google',
+      createdAt: existing?.createdAt || supabaseUser.created_at || nowIso,
+      lastLoginAt: nowIso,
+    };
+
+    this.saveRegisteredUser(authUser);
+    return authUser;
+  }
+
+  /**
+   * Safely attempts to update/create a user profile in Supabase database ('profiles' table)
+   * only if the table exists and RLS permits, without breaking if the application uses standard auth.users.
+   */
+  private async safelySyncProfileToDatabase(supabaseUser: User, authUser: AuthUser): Promise<void> {
+    if (!supabase) return;
+    try {
+      await supabase
+        .from('profiles')
+        .upsert(
+          {
+            id: supabaseUser.id,
+            email: authUser.email,
+            name: authUser.name,
+            avatar: authUser.avatar,
+            organization: authUser.organization,
+            role: authUser.role,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        )
+        .then(
+          () => {},
+          () => {
+            // Silently ignore if profiles table does not exist
+          }
+        );
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Fallback for direct Google profile login when in local demo/offline mode
    */
   public loginWithGoogle(profile?: {
     email?: string;
@@ -97,9 +380,8 @@ class AuthService {
         ? email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
         : 'Google User');
 
-    // Check if user already exists
     const registered = this.getRegisteredUsers();
-    let existingIndex = registered.findIndex(
+    const existingIndex = registered.findIndex(
       (u) => u.email.toLowerCase() === email.toLowerCase()
     );
 
@@ -155,7 +437,6 @@ class AuthService {
       return { success: false, error: 'Password must be at least 4 characters' };
     }
 
-    // Check registered users
     const registered = this.getRegisteredUsers();
     const registeredFound = registered.find(
       (u) => u.email.toLowerCase() === cleanEmail
@@ -174,7 +455,6 @@ class AuthService {
       return { success: true, user: updatedUser };
     }
 
-    // Automatically register user session for new valid email
     const name = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     const newUser: AuthUser = {
       id: `user-${Date.now()}`,
@@ -253,46 +533,67 @@ class AuthService {
     return { success: true, user: newUser };
   }
 
-  public logout() {
+  public async logout(): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Error signing out of Supabase:', err);
+      }
+    }
     this.currentUser = null;
-    try {
-      localStorage.removeItem(AUTH_USER_KEY);
-    } catch {
-      // ignore
+    this.persistUser(null);
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('eventflow_view');
+      } catch {
+        // ignore
+      }
     }
     this.notify();
   }
 
-  private persistUser(user: AuthUser) {
+  private persistUser(user: AuthUser | null) {
     try {
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+      if (user) {
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(AUTH_USER_KEY);
+      }
     } catch {
       // ignore
     }
   }
 
-  /**
-   * Returns all registered users
-   */
   public getRegisteredUsers(): AuthUser[] {
     try {
-      const stored = localStorage.getItem(REGISTERED_USERS_KEY);
-      return stored ? JSON.parse(stored) : [];
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem(REGISTERED_USERS_KEY);
+        if (stored) {
+          const parsed: AuthUser[] = JSON.parse(stored);
+          this.inMemoryRegisteredUsers = parsed;
+          return parsed;
+        }
+      }
+      return this.inMemoryRegisteredUsers;
     } catch {
-      return [];
+      return this.inMemoryRegisteredUsers;
     }
   }
 
   public saveRegisteredUser(user: AuthUser) {
     try {
-      const all = this.getRegisteredUsers();
+      const all = [...this.getRegisteredUsers()];
       const existingIdx = all.findIndex((u) => u.email.toLowerCase() === user.email.toLowerCase());
       if (existingIdx >= 0) {
         all[existingIdx] = user;
       } else {
         all.push(user);
       }
-      localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(all));
+      this.inMemoryRegisteredUsers = all;
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(all));
+      }
       this.notifyUsersChanged();
     } catch {
       // ignore
@@ -302,16 +603,16 @@ class AuthService {
   public deleteRegisteredUser(userId: string) {
     try {
       const all = this.getRegisteredUsers().filter((u) => u.id !== userId);
-      localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(all));
+      this.inMemoryRegisteredUsers = all;
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(all));
+      }
       this.notifyUsersChanged();
     } catch {
       // ignore
     }
   }
 
-  /**
-   * Generates a CSV file content with all registered users
-   */
   public exportUsersAsCSV(): string {
     const users = this.getRegisteredUsers();
     const headers = ['Full Name', 'Email Address', 'Sign-up Provider', 'Organization', 'Role', 'Registered Date'];
@@ -327,9 +628,6 @@ class AuthService {
     return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   }
 
-  /**
-   * Triggers immediate browser download of all registered users as a CSV
-   */
   public downloadUsersCSV(): void {
     if (typeof window === 'undefined') return;
     const csvContent = this.exportUsersAsCSV();

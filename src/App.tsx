@@ -642,6 +642,89 @@ function EventFlowApp({
   );
 }
 
+function AuthCallbackView({
+  onComplete,
+}: {
+  onComplete: (user: AuthUser | null, error?: string) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function processCallback() {
+      try {
+        const result = await authService.handleAuthCallback();
+        if (!isMounted) return;
+
+        if (result.success && result.user) {
+          // Clean up URL query parameters so code is not leaked or reused
+          if (typeof window !== 'undefined') {
+            const cleanPath = window.location.pathname.includes('/auth/callback') ? '/' : window.location.pathname;
+            window.history.replaceState({}, document.title, cleanPath + '#app');
+          }
+          onComplete(result.user);
+        } else {
+          setError(result.error || 'Failed to exchange authentication code.');
+        }
+      } catch (err: unknown) {
+        if (!isMounted) return;
+        const msg = err instanceof Error ? err.message : 'Authentication callback failed.';
+        setError(msg);
+      }
+    }
+
+    processCallback();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [onComplete]);
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-6 text-center select-none font-sans">
+        <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 sm:p-8 space-y-4 shadow-2xl">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mx-auto">
+            <Radio size={24} className="text-rose-400" />
+          </div>
+          <h2 className="text-lg font-bold text-white tracking-tight">Authentication Notice</h2>
+          <p className="text-xs text-neutral-400 leading-relaxed">{error}</p>
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.history.replaceState({}, document.title, '/');
+                }
+                onComplete(null, error);
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs transition-colors cursor-pointer"
+            >
+              Return to EventFlow Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-6 text-center select-none font-sans">
+      <div className="w-full max-w-sm bg-neutral-900/80 border border-neutral-800 rounded-3xl p-8 space-y-5 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-center gap-2 mb-1">
+          <img src="/EventFlow Logo.png" alt="EventFlow" className="w-8 h-8 object-contain rounded-lg shadow-md" />
+          <span className="font-black text-lg tracking-tight uppercase text-white">EventFlow</span>
+        </div>
+        <div className="w-10 h-10 border-3 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mx-auto" />
+        <div>
+          <h3 className="text-sm font-semibold text-white">Completing Google Authentication</h3>
+          <p className="text-xs text-neutral-400 mt-1">Connecting session and verifying stage credentials...</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   if (stageDisplayService.isStageWindow()) {
     return <StageDisplayStandalone />;
@@ -668,13 +751,37 @@ export default function App() {
     );
   };
 
-  // Determine initial view from URL: 'landing', 'app' (workspace), or 'admin'
-  const [currentView, setCurrentView] = useState<'app' | 'landing' | 'admin'>(() => {
+  // Helper function to check if current URL is an OAuth callback
+  const checkIsAuthCallback = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.toLowerCase();
+
+    return (
+      path.includes('/auth/callback') ||
+      path.startsWith('/auth/callback') ||
+      params.has('code') ||
+      (params.has('error') && !params.has('admin')) ||
+      hash.includes('access_token=')
+    );
+  };
+
+  // Determine initial view from URL: 'callback', 'landing', 'app' (workspace), or 'admin'
+  const [currentView, setCurrentView] = useState<'app' | 'landing' | 'admin' | 'callback'>(() => {
+    if (checkIsAuthCallback()) return 'callback';
     if (checkIsAdminUrl()) return 'admin';
     if (typeof window !== 'undefined') {
       const hash = window.location.hash;
       const params = new URLSearchParams(window.location.search);
-      if (hash === '#app' || params.get('view') === 'app') return 'app';
+      const savedView = sessionStorage.getItem('eventflow_view');
+      if (
+        hash === '#app' ||
+        params.get('view') === 'app' ||
+        (savedView === 'app' && authService.isAuthenticated())
+      ) {
+        return 'app';
+      }
     }
     return 'landing';
   });
@@ -684,13 +791,33 @@ export default function App() {
   useEffect(() => {
     return authService.subscribe((user) => {
       setCurrentUser(user);
+      // If user logs in while on callback or landing with #app requested, advance to app
+      if (user && typeof window !== 'undefined' && window.location.hash === '#app') {
+        setCurrentView('app');
+      }
     });
   }, []);
+
+  // Persist active view in sessionStorage to keep users on the app across refreshes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (currentView === 'app') {
+        sessionStorage.setItem('eventflow_view', 'app');
+      } else if (currentView === 'landing') {
+        sessionStorage.removeItem('eventflow_view');
+      }
+    } catch {
+      // ignore
+    }
+  }, [currentView]);
 
   // React to URL hash or popstate navigation changes
   useEffect(() => {
     const handleUrlChange = () => {
-      if (checkIsAdminUrl()) {
+      if (checkIsAuthCallback()) {
+        setCurrentView('callback');
+      } else if (checkIsAdminUrl()) {
         setCurrentView('admin');
       } else if (window.location.hash === '#app') {
         setCurrentView('app');
@@ -704,6 +831,22 @@ export default function App() {
       window.removeEventListener('popstate', handleUrlChange);
     };
   }, []);
+
+  // OAuth Callback View (Exchanges code/token for session)
+  if (currentView === 'callback') {
+    return (
+      <AuthCallbackView
+        onComplete={(user) => {
+          if (user) {
+            setCurrentUser(user);
+            setCurrentView('app');
+          } else {
+            setCurrentView('landing');
+          }
+        }}
+      />
+    );
+  }
 
   // Secret Admin Portal View (Accessible ONLY via direct URL)
   if (currentView === 'admin') {
@@ -733,6 +876,24 @@ export default function App() {
     return (
       <LandingPage
         currentUser={currentUser}
+        onEnterApp={() => setCurrentView('app')}
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setCurrentView('app');
+        }}
+        onLogout={() => {
+          authService.logout();
+          setCurrentUser(null);
+        }}
+      />
+    );
+  }
+
+  // Protected Stage Runner App
+  if (!currentUser) {
+    return (
+      <LandingPage
+        currentUser={null}
         onEnterApp={() => setCurrentView('app')}
         onLoginSuccess={(user) => {
           setCurrentUser(user);

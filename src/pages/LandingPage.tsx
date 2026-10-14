@@ -62,11 +62,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [showUserDropdown, setShowUserDropdown] = useState<boolean>(false);
 
-  // Google Account chooser modal state for regular Google account selection
-  const [showGoogleChooser, setShowGoogleChooser] = useState<boolean>(false);
-  const [useCustomGoogleAccount, setUseCustomGoogleAccount] = useState<boolean>(false);
-  const [googleCustomEmail, setGoogleCustomEmail] = useState<string>('');
-  const [googleCustomName, setGoogleCustomName] = useState<string>('');
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState<boolean>(false);
 
   // Demo 2: Animated Overrun Recovery Simulation
@@ -115,30 +110,26 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     }
   };
 
-  // Google Sign-In & Create Account Selection Handler
-  const handleGoogleAccountSelect = (email: string, name?: string) => {
+  // Google Sign-In & Create Account Handler (Real Supabase Google OAuth)
+  const handleGoogleSignIn = async () => {
     setIsGoogleSigningIn(true);
     setAuthLoading(true);
+    setAuthError('');
 
-    setTimeout(() => {
-      const emailToUse = email.trim().toLowerCase() || 'adekunleolaomo@gmail.com';
-      const nameFromEmail =
-        name?.trim() ||
-        emailToUse.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-
-      const res = authService.loginWithGoogle({
-        email: emailToUse,
-        name: nameFromEmail,
-        organization: authOrganization.trim() || 'Live Production Team',
-      });
-
+    try {
+      const res = await authService.signInWithGoogle();
+      if (!res.success && res.error) {
+        setAuthError(res.error);
+        setIsGoogleSigningIn(false);
+        setAuthLoading(false);
+      }
+      // On success, the browser redirects to Google OAuth consent screen via Supabase
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to connect to Google authentication.';
+      setAuthError(msg);
       setIsGoogleSigningIn(false);
       setAuthLoading(false);
-      setShowGoogleChooser(false);
-      setShowAuthModal(false);
-      onLoginSuccess(res.user);
-      onEnterApp();
-    }, 450);
+    }
   };
 
   // Form submission handler
@@ -770,33 +761,38 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {/* Google Authentication Button */}
             <button
               type="button"
-              onClick={() => {
-                setAuthError('');
-                setShowGoogleChooser(true);
-              }}
+              onClick={handleGoogleSignIn}
               disabled={authLoading}
-              className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-100 text-neutral-900 font-semibold text-xs transition-all shadow-md flex items-center justify-center gap-2.5 cursor-pointer active:scale-[0.99] border border-neutral-200"
+              className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-100 text-neutral-900 font-semibold text-xs transition-all shadow-md flex items-center justify-center gap-2.5 cursor-pointer active:scale-[0.99] border border-neutral-200 disabled:opacity-60"
             >
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.28-2.09 3.66-5.17 3.66-9.14z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.33 24 12 24z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
-                />
-              </svg>
+              {isGoogleSigningIn ? (
+                <div className="w-4 h-4 border-2 border-neutral-900/30 border-t-neutral-900 rounded-full animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.28-2.09 3.66-5.17 3.66-9.14z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.33 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
+                  />
+                </svg>
+              )}
               <span>
-                {authModalMode === 'signup' ? 'Create account with Google' : 'Continue with Google'}
+                {isGoogleSigningIn
+                  ? 'Connecting to Google...'
+                  : authModalMode === 'signup'
+                  ? 'Create account with Google'
+                  : 'Continue with Google'}
               </span>
             </button>
 
@@ -982,33 +978,38 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {/* Google Authentication Button */}
             <button
               type="button"
-              onClick={() => {
-                setAuthError('');
-                setShowGoogleChooser(true);
-              }}
+              onClick={handleGoogleSignIn}
               disabled={authLoading}
-              className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-100 text-neutral-900 font-semibold text-xs transition-all shadow-md flex items-center justify-center gap-2.5 cursor-pointer active:scale-[0.99] border border-neutral-200"
+              className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-100 text-neutral-900 font-semibold text-xs transition-all shadow-md flex items-center justify-center gap-2.5 cursor-pointer active:scale-[0.99] border border-neutral-200 disabled:opacity-60"
             >
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.28-2.09 3.66-5.17 3.66-9.14z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.33 24 12 24z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
-                />
-              </svg>
+              {isGoogleSigningIn ? (
+                <div className="w-4 h-4 border-2 border-neutral-900/30 border-t-neutral-900 rounded-full animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.28-2.09 3.66-5.17 3.66-9.14z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.33 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
+                  />
+                </svg>
+              )}
               <span>
-                {authModalMode === 'signup' ? 'Create account with Google' : 'Continue with Google'}
+                {isGoogleSigningIn
+                  ? 'Connecting to Google...'
+                  : authModalMode === 'signup'
+                  ? 'Create account with Google'
+                  : 'Continue with Google'}
               </span>
             </button>
 
@@ -1118,143 +1119,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 )}
               </button>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================ */}
-      {/* 9. GOOGLE ACCOUNT SELECTION POPUP MODAL */}
-      {/* ============================================================ */}
-      {showGoogleChooser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
-          <div
-            className="w-full max-w-[420px] bg-white text-neutral-900 rounded-3xl shadow-2xl p-6 sm:p-7 border border-neutral-200 relative animate-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Google Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <svg className="w-6 h-6" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.28-2.09 3.66-5.17 3.66-9.14z" />
-                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.33 24 12 24z" />
-                  <path fill="#FBBC05" d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z" />
-                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z" />
-                </svg>
-                <span className="font-semibold text-sm text-neutral-700">Google</span>
-              </div>
-              <button
-                onClick={() => {
-                  setShowGoogleChooser(false);
-                  setUseCustomGoogleAccount(false);
-                }}
-                className="p-1.5 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <h3 className="text-xl font-bold text-neutral-900 tracking-tight">Choose an account</h3>
-            <p className="text-xs text-neutral-600 mt-1 mb-5">
-              to continue to <strong className="text-neutral-900">EventFlow Stage Runner</strong>
-            </p>
-
-            {isGoogleSigningIn ? (
-              <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
-                <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                <p className="text-xs font-medium text-neutral-600">Signing in with Google...</p>
-              </div>
-            ) : (
-              <>
-                {/* Account List */}
-                <div className="divide-y divide-neutral-200 border-y border-neutral-200 -mx-6 px-6 mb-5">
-                  {/* Detected Primary Google Account */}
-                  <button
-                    type="button"
-                    onClick={() => handleGoogleAccountSelect('adekunleolaomo@gmail.com', 'Adekunle Olaomo')}
-                    className="w-full py-3.5 flex items-center justify-between hover:bg-neutral-50 px-2 rounded-xl transition-colors cursor-pointer text-left"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold text-sm flex items-center justify-center shadow-sm">
-                        A
-                      </div>
-                      <div>
-                        <div className="font-semibold text-xs text-neutral-900">Adekunle Olaomo</div>
-                        <div className="text-[11px] text-neutral-600">adekunleolaomo@gmail.com</div>
-                      </div>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                      Signed in
-                    </span>
-                  </button>
-
-                  {/* Use Another Google Account */}
-                  {!useCustomGoogleAccount ? (
-                    <button
-                      type="button"
-                      onClick={() => setUseCustomGoogleAccount(true)}
-                      className="w-full py-3.5 flex items-center gap-3 hover:bg-neutral-50 px-2 rounded-xl transition-colors cursor-pointer text-left text-neutral-700"
-                    >
-                      <div className="w-9 h-9 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-500 font-bold">
-                        <UserPlus size={16} />
-                      </div>
-                      <div className="font-medium text-xs text-neutral-800">
-                        Use another Google account
-                      </div>
-                    </button>
-                  ) : (
-                    <div className="py-3 px-2 space-y-2.5">
-                      <div className="text-[11px] font-semibold text-neutral-700">Enter Google Account:</div>
-                      <input
-                        type="text"
-                        placeholder="Your Full Name"
-                        value={googleCustomName}
-                        onChange={(e) => setGoogleCustomName(e.target.value)}
-                        className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-blue-500"
-                      />
-                      <input
-                        type="email"
-                        placeholder="name@gmail.com"
-                        value={googleCustomEmail}
-                        onChange={(e) => setGoogleCustomEmail(e.target.value)}
-                        className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-blue-500"
-                      />
-                      <div className="flex justify-end gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setUseCustomGoogleAccount(false)}
-                          className="px-3 py-1.5 rounded-xl text-neutral-600 hover:text-neutral-800 text-xs font-medium cursor-pointer"
-                        >
-                          Back
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!googleCustomEmail.trim() || !googleCustomEmail.includes('@')) return;
-                            handleGoogleAccountSelect(googleCustomEmail, googleCustomName);
-                          }}
-                          className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow cursor-pointer"
-                        >
-                          Continue
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <p className="text-[11px] text-neutral-500 leading-relaxed mb-6">
-                  To continue, Google will share your name, email address, language preference, and profile picture with EventFlow. Before using EventFlow, you can review its privacy policy and terms of service.
-                </p>
-
-                <div className="flex items-center justify-between text-xs text-neutral-500 pt-1 border-t border-neutral-100">
-                  <span className="text-[11px]">English (United States)</span>
-                  <div className="flex gap-3 text-[11px]">
-                    <span className="hover:underline cursor-pointer">Help</span>
-                    <span className="hover:underline cursor-pointer">Privacy</span>
-                    <span className="hover:underline cursor-pointer">Terms</span>
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         </div>
       )}
